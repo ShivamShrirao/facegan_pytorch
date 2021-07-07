@@ -8,6 +8,7 @@ import random
 import numpy as np
 from collections import OrderedDict
 
+
 def seed_everything(seed=33):
     np.random.seed(seed)
     random.seed(seed)
@@ -15,16 +16,18 @@ def seed_everything(seed=33):
     torch.cuda.manual_seed(seed)
     torch.backends.cudnn.benchmark = True
     # torch.backends.cudnn.deterministic = True
-    
+
 seed_everything()
 
+
 class GaussianNoise(nn.Module):
-    def __init__(self, std):
+    def __init__(self, mean=0, std=0.1):
         super().__init__()
+        self.mean = mean
         self.std = std
 
     def forward(self, x):
-        return x + torch.empty_like(x).normal_(std=self.std)
+        return x + torch.empty_like(x).normal_(mean=self.mean, std=self.std)
 
 
 class Generator(nn.Module):
@@ -46,14 +49,12 @@ class Generator(nn.Module):
         ])
 
         self.gen = nn.Sequential(OrderedDict([
-            ('conv',    nn.LazyConvTranspose2d(
-                3, kernel_size=4, stride=2, padding=1)),
+            ('conv',    nn.LazyConvTranspose2d(3, kernel_size=4, stride=2, padding=1)),
             ('act',     nn.Tanh()),
         ]))
 
     def upsample(self, num_filters, bn=True, dp_rate=0.3):
-        layers = [nn.LazyConvTranspose2d(
-            num_filters, kernel_size=4, stride=2, bias=not bn, padding=1)]
+        layers = [nn.LazyConvTranspose2d(num_filters, kernel_size=4, stride=2, bias=not bn, padding=1)]
         if bn:
             layers.append(nn.BatchNorm2d(num_filters))
         layers.append(self.activation(inplace=True))
@@ -124,9 +125,9 @@ def train_step(real_images, netG, netD, optG, optD, scaler, use_amp=True):
     # Update generator
     with amp.autocast(enabled=use_amp):
         fake_out = netD(netG(noise))
-        lossG = criterion(fake_out, torch.ones_like(fake_out))  # Treat fake images as real.
+        lossG = criterion(fake_out, torch.ones_like(fake_out))  # Treat fake images as real to train the Generator.
 
-    # grad(lossG, netG.parameters(), retain_graph=True)     # this can also be used to calculate grads wrt specific parameters.
+    # grad(lossG, netG.parameters(), retain_graph=True)     # this can also be used to calculate grads wrt specific parameters and update them for parameters manually.
     netG.requires_grad_(True)           # Only calculate gradients for Generator.
     netD.requires_grad_(False)          # Do not calculate gradients for Discriminator.
     scaler.scale(lossG).backward(retain_graph=True) # retain graph cause fake_out is also used to calculate loss for Discriminator.
@@ -137,7 +138,7 @@ def train_step(real_images, netG, netD, optG, optD, scaler, use_amp=True):
     with amp.autocast(enabled=use_amp):
         real_out = netD(real_images)
         lossD = (criterion(real_out, torch.empty_like(real_out).uniform_(0.9, 1.0))
-                + criterion(fake_out, torch.empty_like(fake_out).uniform_(0.0, 0.1)))   # Treat real as real and fake as fake.
+                 + criterion(fake_out, torch.empty_like(fake_out).uniform_(0.0, 0.1)))   # Treat real as real and fake as fake to train Discriminator.
 
     # grad(lossD, netD.parameters())
     netG.requires_grad_(False)          # Do not calculate gradients for Generator.
@@ -147,6 +148,7 @@ def train_step(real_images, netG, netD, optG, optD, scaler, use_amp=True):
     optD.zero_grad(set_to_none=True)
 
     scaler.update()
+
 
 if __name__ == '__main__':
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
