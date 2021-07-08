@@ -1,5 +1,5 @@
 import torch
-from torchvision import datasets, transforms as T
+from torchvision import transforms as T
 
 from nvidia.dali.pipeline import Pipeline
 import nvidia.dali.fn as fn
@@ -22,7 +22,7 @@ def get_preproc(input_size):
 def dali_pipeline(batch_size, num_threads, device_id, image_dir, input_size):
     pipe = Pipeline(batch_size, num_threads, device_id)
     with pipe:
-        jpegs, _ = fn.readers.file(file_root=image_dir, random_shuffle=True)
+        jpegs, lbls = fn.readers.file(file_root=image_dir, random_shuffle=True)
         images = fn.decoders.image(jpegs, device='mixed', output_type=types.RGB)
         images = fn.resize(images, device='gpu', resize_shorter=input_size, interp_type=types.INTERP_TRIANGULAR)
         mirror = fn.random.coin_flip(probability=0.5)
@@ -33,5 +33,5 @@ def dali_pipeline(batch_size, num_threads, device_id, image_dir, input_size):
                                           mean=[0.5 * 255, 0.5 * 255, 0.5 * 255],
                                           std=[0.5 * 255, 0.5 * 255, 0.5 * 255],
                                           mirror=mirror)
-        pipe.set_outputs(images)
+        pipe.set_outputs(images, lbls)
     return pipe
