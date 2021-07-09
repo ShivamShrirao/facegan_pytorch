@@ -121,7 +121,11 @@ def weights_init(m):
 
 noise_dim = 128
 
-def train_epoch(train_loader, netG, netD, optG, optD, scaler, epoch=1, use_amp=True, log_interval=10):
+def set_grads(grads, params):
+    for g,p in zip(grads, params):
+        p.grad = g
+
+def train_epoch(train_loader, netG, netD, optG, optD, scaler, noise_dim, epoch=1, use_amp=True, log_interval=10):
     netG.train()
     netD.train()
     lossesG = AverageMeter()
@@ -133,40 +137,29 @@ def train_epoch(train_loader, netG, netD, optG, optD, scaler, epoch=1, use_amp=T
             real_images = batch[0]['data']
             noise = torch.randn(real_images.size(0), noise_dim, dtype=real_images.dtype,
                                 device=real_images.device)
-            # Update generator
             with amp.autocast(enabled=use_amp):
                 fake_out = netD(netG(noise))
-                lossG = criterion(fake_out, torch.ones_like(fake_out))  # Treat fake images as real to train the Generator.
-
-            # grad(lossG, netG.parameters(), retain_graph=True)     # this can also be used to calculate grads wrt specific parameters and update them for parameters manually.
-            netG.requires_grad_(True)           # Only calculate gradients for Generator.
-            netD.requires_grad_(False)          # Do not calculate gradients for Discriminator.
-            scaler.scale(lossG).backward(retain_graph=True) # retain graph cause fake_out is also used to calculate loss for Discriminator.
-            # Update the generator later.
-            
-            lossesG.update(lossG.detach_(), noise.size(0))
-
-            # Update Discriminator
-            with amp.autocast(enabled=use_amp):
                 real_out = netD(real_images)
-                lossD = (criterion(real_out, torch.empty_like(real_out).uniform_(0.9, 1.0))
-                        + criterion(fake_out, torch.empty_like(fake_out).uniform_(0.0, 0.1)))   # Treat real as real and fake as fake to train Discriminator.
+                lossG = criterion(fake_out, torch.ones_like(fake_out))                          # Treat fake images as real to train the Generator.
+                lossD = (criterion(real_out, torch.empty_like(real_out).uniform_(0.9, 1.0))     # Treat real as real
+                        + criterion(fake_out, torch.empty_like(fake_out).uniform_(0.0, 0.1)))   # and fake as fake to train Discriminator.
 
-            # grad(lossD, netD.parameters())
-            netG.requires_grad_(False)          # Do not calculate gradients for Generator.
-            netD.requires_grad_(True)           # Only calculate gradients for Discriminator.
-            scaler.scale(lossD).backward(retain_graph=True)
+            scaled_gradsG = autograd.grad(scaler.scale(lossG), netG.parameters(), retain_graph=True)
+            scaled_gradsD = autograd.grad(scaler.scale(lossD), netD.parameters())
+
+            set_grads(scaled_gradsG, netG.parameters())
+            set_grads(scaled_gradsD, netD.parameters())
+
             scaler.step(optD)
             optD.zero_grad(set_to_none=True)
-
             scaler.step(optG)
             optG.zero_grad(set_to_none=True)
-
             scaler.update()
 
+            lossesG.update(lossG.detach_(), noise.size(0))
             lossesD.update(lossD.detach_(), real_images.size(0))
             if not idx%log_interval:
-                info = {'Generator loss': float(lossesG.avg), 'Discriminator loss': float(lossesD.avg)}
+                info = {'Generator_loss': float(lossesG.avg), 'Discriminator_loss': float(lossesD.avg)}
                 # wandb.log(info)
                 pbar.set_postfix(info)
 
